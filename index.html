@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Landmark Weather</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js" defer></script>
+    <script type="module" src="./src/app.js"></script>
+  </head>
+  <body data-theme="loading">
+    <main class="stage" aria-label="3D landmark weather visualizer">
+      <div id="photoLayer" class="photo-layer" aria-hidden="true"></div>
+      <div class="weather-wash" aria-hidden="true"></div>
+      <canvas id="weatherCanvas" aria-hidden="true"></canvas>
+
+      <section class="hud" aria-label="Weather controls">
+        <div class="brand-row">
+          <div>
+            <p class="eyebrow">Landmark Weather</p>
+            <h1 id="placeName">Finding your sky</h1>
+          </div>
+          <div id="conditionBadge" class="condition-badge">Live</div>
+        </div>
+
+        <div class="weather-grid" aria-label="Current weather">
+          <div>
+            <span class="metric-label">Temp</span>
+            <strong id="tempValue">--</strong>
+          </div>
+          <div>
+            <span class="metric-label">Feels</span>
+            <strong id="feelsValue">--</strong>
+          </div>
+          <div>
+            <span class="metric-label">Wind</span>
+            <strong id="windValue">--</strong>
+          </div>
+          <div>
+            <span class="metric-label">Humidity</span>
+            <strong id="humidityValue">--</strong>
+          </div>
+        </div>
+
+        <form id="searchForm" class="search-row" autocomplete="off">
+          <label class="search-box">
+            <i data-lucide="search" aria-hidden="true"></i>
+            <input id="searchInput" type="search" placeholder="Search city or landmark" />
+          </label>
+          <button class="icon-button" type="submit" aria-label="Search" title="Search">
+            <i data-lucide="arrow-right" aria-hidden="true"></i>
+          </button>
+        </form>
+
+        <div class="actions">
+          <button id="locateButton" class="tool-button" type="button">
+            <i data-lucide="navigation" aria-hidden="true"></i>
+            <span>Locate</span>
+          </button>
+          <button id="refreshButton" class="tool-button" type="button">
+            <i data-lucide="refresh-cw" aria-hidden="true"></i>
+            <span>Refresh</span>
+          </button>
+        </div>
+      </section>
+
+      <section class="landmark-bar" aria-label="Famous landmarks">
+        <div id="landmarkScroller" class="landmark-scroller"></div>
+      </section>
+
+      <aside class="source-strip" aria-label="Photo source">
+        <span id="photoCredit">Photo source loading</span>
+        <span id="apiCredit">Weather: Open-Meteo | Places: OpenStreetMap | Photos: Wikipedia/Wikimedia Commons</span>
+      </aside>
+
+      <div id="statusToast" class="status-toast" role="status" aria-live="polite"></div>
+    </main>
+  </body>
+</html>
