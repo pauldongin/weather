@@ -4,7 +4,7 @@ A local browser app that shows current weather as a 3D animated scene over a lan
 
 Published page:
 
-`https://pauldongin.github.io/weather-landmark-visualizer/`
+`https://pauldongin.github.io/weather/`
 
 ## Run
 
