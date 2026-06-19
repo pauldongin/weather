@@ -1,8 +1,6 @@
-import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js";
-
 const els = {
-  canvas: document.querySelector("#weatherCanvas"),
   photoLayer: document.querySelector("#photoLayer"),
+  photoLayerNext: document.querySelector("#photoLayerNext"),
   placeName: document.querySelector("#placeName"),
   conditionBadge: document.querySelector("#conditionBadge"),
   tempValue: document.querySelector("#tempValue"),
@@ -37,17 +35,53 @@ const famousLandmarks = [
   { name: "Marina Bay Sands", place: "Singapore", lat: 1.2834, lon: 103.8607, wikiTitle: "Marina Bay Sands", query: "Marina Bay Sands Singapore skyline photograph" }
 ];
 
+const weatherPhotos = {
+  clear: {
+    id: "1500530855697-b586d89ba3ee",
+    label: "Sunlight across a clear landscape"
+  },
+  cloud: {
+    id: "1534088568595-a066f410bcda",
+    label: "Cinematic cloudscape"
+  },
+  rain: {
+    id: "1519692933481-e162a57d6721",
+    label: "Rain on glass"
+  },
+  storm: {
+    id: "1605727216801-e27ce1d0cc28",
+    label: "Lightning storm"
+  },
+  snow: {
+    id: "1478265409131-1f65c88f965c",
+    label: "Snow-covered forest"
+  },
+  fog: {
+    id: "1487621167305-5d248087c724",
+    label: "Mountains in fog"
+  },
+  wind: {
+    id: "1505672678657-cc7037095e60",
+    label: "Wind moving through the landscape"
+  },
+  night: {
+    id: "1500534623283-312aade485b7",
+    label: "Night sky over the mountains"
+  }
+};
+
 let activeLandmarkName = "";
 let currentLocation = null;
 let currentWeather = null;
 let activePhotoRequest = 0;
 let toastTimer = 0;
+let photoTransitionTimer = 0;
 
 const sceneState = {
   scene: null,
   camera: null,
   renderer: null,
-  clock: new THREE.Clock(),
+  clock: null,
   skyline: null,
   weatherGroup: null,
   rain: null,
@@ -64,7 +98,6 @@ const sceneState = {
 init();
 
 function init() {
-  initScene();
   renderLandmarkChips();
   bindEvents();
   refreshIcons();
@@ -240,8 +273,7 @@ async function loadWeatherLocation(location, options = {}) {
     const weather = await fetchWeather(location.lat, location.lon);
     currentWeather = weather;
     updateWeatherPanel(location.label, weather);
-    updateSceneWeather(weather.condition.type, weather);
-    await applyPhotoForLocation(location, options, photoRequestId);
+    await applyWeatherPhoto(weather, photoRequestId);
     showStatus(`${weather.condition.label} in ${location.label}`, 2600);
   } catch (error) {
     showStatus(error.message || "Weather load failed.");
@@ -347,8 +379,30 @@ function updateWeatherPanel(label, weather) {
   els.feelsValue.textContent = formatTemp(weather.apparent);
   els.windValue.textContent = `${Math.round(weather.wind)} mph`;
   els.humidityValue.textContent = `${Math.round(weather.humidity)}%`;
-  document.body.dataset.theme = weather.condition.type;
+  document.body.dataset.theme = getWeatherVisualType(weather);
   document.body.classList.toggle("is-night", !weather.isDay);
+}
+
+function getWeatherVisualType(weather) {
+  const severeCondition = ["rain", "storm", "snow"].includes(weather.condition.type);
+  if (!severeCondition && weather.wind >= 20) return "wind";
+  if (!weather.isDay && weather.condition.type === "clear") return "night";
+  return weather.condition.type;
+}
+
+async function applyWeatherPhoto(weather, requestId) {
+  const type = getWeatherVisualType(weather);
+  const selected = weatherPhotos[type] || weatherPhotos.cloud;
+  const sourceUrl = `https://unsplash.com/photos/${selected.id}`;
+  const imageUrl = `https://images.unsplash.com/photo-${selected.id}?auto=format&fit=crop&w=2200&q=88`;
+
+  await applyPhoto({
+    title: selected.label,
+    url: imageUrl,
+    sourceUrl,
+    artist: "Unsplash",
+    license: "Unsplash License"
+  }, requestId);
 }
 
 function conditionFromCode(code, isDay) {
@@ -500,14 +554,26 @@ function normalizeCommonsPage(page) {
   };
 }
 
-async function applyPhoto(photo) {
+async function applyPhoto(photo, requestId = activePhotoRequest) {
   els.photoLayer.dataset.photoState = "loading";
   await preloadImage(photo.url);
+  if (requestId !== activePhotoRequest) return;
   const escapedUrl = photo.url.replace(/"/g, "%22");
-  els.photoLayer.style.backgroundImage = [
+  const backgroundImage = [
     "linear-gradient(135deg, rgba(13, 18, 25, 0.22), rgba(28, 45, 51, 0.08))",
     `url("${escapedUrl}")`
   ].join(", ");
+
+  window.clearTimeout(photoTransitionTimer);
+  els.photoLayerNext.style.backgroundImage = backgroundImage;
+  // Force the browser to commit the new image before starting the crossfade.
+  void els.photoLayerNext.offsetWidth;
+  els.photoLayerNext.style.opacity = "1";
+
+  photoTransitionTimer = window.setTimeout(() => {
+    els.photoLayer.style.backgroundImage = backgroundImage;
+    els.photoLayerNext.style.opacity = "0";
+  }, 900);
 
   const artist = photo.artist ? ` by ${escapeHtml(trimText(photo.artist, 70))}` : "";
   const license = photo.license ? ` · ${escapeHtml(trimText(photo.license, 38))}` : "";
@@ -516,6 +582,9 @@ async function applyPhoto(photo) {
 }
 
 function applyFallbackPhoto(searchTerm) {
+  window.clearTimeout(photoTransitionTimer);
+  els.photoLayerNext.style.opacity = "0";
+  els.photoLayerNext.style.backgroundImage = "";
   els.photoLayer.style.backgroundImage = "";
   els.photoCredit.textContent = `No Commons photo match for ${trimText(searchTerm, 62)}`;
   els.photoLayer.dataset.photoState = "fallback";
@@ -592,7 +661,8 @@ function initScene() {
     powerPreference: "high-performance"
   });
   renderer.setClearColor(0x000000, 0);
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  const pixelRatioLimit = window.matchMedia("(max-width: 760px)").matches ? 1.5 : 2;
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, pixelRatioLimit));
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
 
@@ -640,11 +710,11 @@ function updateSceneWeather(type, weather = {}) {
     createClouds(7, 0.42);
   } else if (type === "rain") {
     createClouds(8, 0.52);
-    createRain(940);
+    createRain(window.innerWidth <= 760 ? 620 : 940);
     sceneState.scene.fog.density = 0.026;
   } else if (type === "snow") {
     createClouds(6, 0.46);
-    createSnow(760);
+    createSnow(window.innerWidth <= 760 ? 500 : 760);
     sceneState.scene.fog.density = 0.024;
   } else if (type === "fog") {
     createClouds(9, 0.68);
@@ -652,7 +722,7 @@ function updateSceneWeather(type, weather = {}) {
     sceneState.scene.fog.density = 0.052;
   } else if (type === "storm") {
     createClouds(10, 0.64);
-    createRain(1250);
+    createRain(window.innerWidth <= 760 ? 780 : 1250);
     createLightning();
     sceneState.scene.fog.density = 0.034;
     ambient.intensity = 0.46;
@@ -805,7 +875,7 @@ function resizeScene() {
 }
 
 function animateScene() {
-  const delta = Math.min(sceneState.clock.getDelta(), 0.05);
+  const delta = Math.min(sceneState.clock.getDelta(), 1 / 30);
   const elapsed = sceneState.clock.elapsedTime;
   const motionDelta = sceneState.reducedMotion ? delta * 0.25 : delta;
 

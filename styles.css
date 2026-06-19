@@ -64,10 +64,17 @@ a {
   background-size: cover;
   filter: saturate(1.08) brightness(1.04) contrast(1.03);
   transform: translate3d(var(--photo-x), var(--photo-y), 0) scale(1.04);
+  will-change: opacity, transform;
   transition:
-    background-image 700ms ease,
-    filter 700ms ease,
-    opacity 500ms ease;
+    filter 900ms ease,
+    opacity 900ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 1200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.photo-layer-next {
+  z-index: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .photo-layer::after {
@@ -89,15 +96,6 @@ a {
   transition:
     background 600ms ease,
     opacity 600ms ease;
-}
-
-#weatherCanvas {
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  width: 100%;
-  height: 100%;
-  display: block;
 }
 
 .hud {
@@ -427,6 +425,18 @@ body[data-theme="storm"] .weather-wash {
   opacity: 0.72;
 }
 
+body[data-theme="wind"] .weather-wash {
+  background:
+    linear-gradient(115deg, rgba(123, 160, 171, 0.16), rgba(15, 36, 48, 0.34)),
+    radial-gradient(circle at 72% 22%, rgba(224, 242, 245, 0.2), transparent 32%);
+  opacity: 0.38;
+}
+
+body[data-theme="night"] .weather-wash {
+  background: linear-gradient(145deg, rgba(17, 25, 52, 0.25), rgba(3, 7, 18, 0.58));
+  opacity: 0.48;
+}
+
 body.is-night .photo-layer {
   filter: saturate(0.95) brightness(0.92) contrast(1.05);
 }
@@ -435,7 +445,7 @@ body.is-night .weather-wash {
   opacity: 0.34;
 }
 
-body[data-theme="loading"] .photo-layer {
+body[data-theme="loading"] #photoLayer {
   opacity: 0.8;
 }
 
@@ -451,33 +461,116 @@ body[data-theme="loading"] .photo-layer {
   }
 
   .hud {
-    top: 14px;
-    left: 14px;
-    width: calc(100vw - 28px);
-    padding: 16px;
+    top: 10px;
+    left: 10px;
+    width: calc(100vw - 20px);
+    padding: 12px;
+    border-radius: 12px;
+    background: rgba(9, 16, 24, 0.48);
+    backdrop-filter: blur(18px) saturate(1.12);
   }
 
   h1 {
-    max-width: 235px;
-    font-size: 2rem;
+    max-width: min(235px, 66vw);
+    font-size: clamp(1.48rem, 7vw, 1.75rem);
+    line-height: 1;
+  }
+
+  .eyebrow {
+    margin-bottom: 3px;
+    font-size: 0.64rem;
+  }
+
+  .brand-row {
+    align-items: center;
+    gap: 10px;
+  }
+
+  .condition-badge {
+    min-width: 72px;
+    max-width: 94px;
+    padding: 6px 9px;
+    overflow: hidden;
+    font-size: 0.72rem;
+    text-overflow: ellipsis;
   }
 
   .weather-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    margin-top: 12px;
+  }
+
+  .weather-grid > div {
+    padding: 8px 7px;
   }
 
   .weather-grid > div:nth-child(2n) {
+    border-right: 1px solid var(--line);
+  }
+
+  .weather-grid > div:last-child {
     border-right: 0;
   }
 
-  .weather-grid > div:nth-child(-n + 2) {
-    border-bottom: 1px solid var(--line);
+  .metric-label {
+    margin-bottom: 3px;
+    font-size: 0.58rem;
+  }
+
+  .weather-grid strong {
+    font-size: clamp(0.76rem, 3.6vw, 0.92rem);
+    white-space: nowrap;
+  }
+
+  .search-row {
+    grid-template-columns: 1fr 40px;
+    margin-top: 10px;
+  }
+
+  .search-box,
+  .icon-button {
+    height: 40px;
+  }
+
+  .icon-button {
+    width: 40px;
+  }
+
+  .search-box {
+    padding: 0 11px;
+  }
+
+  .search-box input {
+    font-size: 0.9rem;
+  }
+
+  .tool-button {
+    height: 36px;
+    gap: 6px;
+    font-size: 0.86rem;
+  }
+
+  .tool-button svg,
+  .icon-button svg {
+    width: 17px;
+    height: 17px;
   }
 
   .landmark-bar {
     left: 14px;
     right: 14px;
     bottom: 70px;
+  }
+
+  .landmark-scroller {
+    scroll-snap-type: x proximity;
+    scroll-behavior: smooth;
+  }
+
+  .landmark-chip {
+    height: 36px;
+    scroll-snap-align: center;
+    font-size: 0.8rem;
   }
 
   .source-strip {
