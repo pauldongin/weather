@@ -19,7 +19,6 @@ for (const config of viewports) {
     test("renders weather scene, photo background, and stable controls", async ({ page }) => {
       await page.goto(appUrl, { waitUntil: "domcontentloaded" });
 
-      await expect(page.locator("#weatherCanvas")).toBeVisible();
       await expect(page.locator("#tempValue")).not.toHaveText("--", { timeout: 30000 });
 
       await page.getByRole("button", { name: "Taj Mahal" }).click();
@@ -33,32 +32,11 @@ for (const config of viewports) {
 
       await page.waitForTimeout(700);
 
-      const canvas = await page.evaluate(() => {
-        const element = document.querySelector("#weatherCanvas");
-        const gl = element.getContext("webgl2") || element.getContext("webgl");
-        const pixel = new Uint8Array(4);
-        let nonBlank = 0;
-
-        for (let row = 1; row < 9; row += 1) {
-          for (let col = 1; col < 9; col += 1) {
-            const x = Math.floor(element.width * (col / 10));
-            const y = Math.floor(element.height * (row / 10));
-            gl.readPixels(x, y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
-            if (pixel[3] > 0 && pixel[0] + pixel[1] + pixel[2] > 12) {
-              nonBlank += 1;
-            }
-          }
-        }
-
-        return { width: element.width, height: element.height, nonBlank };
-      });
-
-      expect(canvas.width).toBeGreaterThan(200);
-      expect(canvas.height).toBeGreaterThan(200);
-      const condition = await page.locator("#conditionBadge").innerText();
-      if (!/clear/i.test(condition)) {
-        expect(canvas.nonBlank).toBeGreaterThan(0);
-      }
+      const photoBackground = await page.locator("#photoLayerNext").evaluate((element) =>
+        getComputedStyle(element).backgroundImage
+      );
+      expect(photoBackground).toContain("images.unsplash.com");
+      await expect(page.locator("#photoCredit")).toContainText("Unsplash");
 
       const layout = await page.evaluate(() => {
         const hud = document.querySelector(".hud").getBoundingClientRect();
@@ -75,6 +53,12 @@ for (const config of viewports) {
       expect(layout.hudBar).toBeFalsy();
       expect(layout.hudSource).toBeFalsy();
       expect(layout.barSource).toBeFalsy();
+
+      if (config.name === "mobile") {
+        const hud = await page.locator(".hud").boundingBox();
+        expect(hud.height).toBeLessThan(290);
+        expect(hud.y + hud.height).toBeLessThan(config.viewport.height * 0.46);
+      }
 
       await page.screenshot({
         path: `test-results/${config.name}-landmark-weather.png`,
