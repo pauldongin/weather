@@ -12,7 +12,7 @@ Published page: <https://pauldongin.github.io/weather/>
 
 | Desktop | Mobile |
 | --- | --- |
-| ![Desktop — rain over the Eiffel Tower](assets/desktop.png) | ![Mobile — snow over Mount Fuji](assets/mobile.png) |
+| ![Desktop — rain over Gyeongbokgung](assets/desktop.png) | ![Mobile — snow over Mount Fuji](assets/mobile.png) |
 
 ## How it works
 
