@@ -35,8 +35,13 @@ for (const config of viewports) {
       const photoBackground = await page.locator("#photoLayerNext").evaluate((element) =>
         getComputedStyle(element).backgroundImage
       );
-      expect(photoBackground).toContain("images.unsplash.com");
-      await expect(page.locator("#photoCredit")).toContainText("Unsplash");
+      expect(photoBackground).toContain("wikimedia.org");
+
+      const weatherCanvasPainted = await page.evaluate(() => {
+        const canvas = document.querySelector("#weatherCanvas");
+        return Boolean(canvas) && canvas.width > 0 && canvas.height > 0;
+      });
+      expect(weatherCanvasPainted).toBeTruthy();
 
       const layout = await page.evaluate(() => {
         const hud = document.querySelector(".hud").getBoundingClientRect();

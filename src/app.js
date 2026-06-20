@@ -35,41 +35,6 @@ const famousLandmarks = [
   { name: "Marina Bay Sands", place: "Singapore", lat: 1.2834, lon: 103.8607, wikiTitle: "Marina Bay Sands", query: "Marina Bay Sands Singapore skyline photograph" }
 ];
 
-const weatherPhotos = {
-  clear: {
-    id: "1500530855697-b586d89ba3ee",
-    label: "Sunlight across a clear landscape"
-  },
-  cloud: {
-    id: "1534088568595-a066f410bcda",
-    label: "Cinematic cloudscape"
-  },
-  rain: {
-    id: "1519692933481-e162a57d6721",
-    label: "Rain on glass"
-  },
-  storm: {
-    id: "1605727216801-e27ce1d0cc28",
-    label: "Lightning storm"
-  },
-  snow: {
-    id: "1478265409131-1f65c88f965c",
-    label: "Snow-covered forest"
-  },
-  fog: {
-    id: "1487621167305-5d248087c724",
-    label: "Mountains in fog"
-  },
-  wind: {
-    id: "1505672678657-cc7037095e60",
-    label: "Wind moving through the landscape"
-  },
-  night: {
-    id: "1500534623283-312aade485b7",
-    label: "Night sky over the mountains"
-  }
-};
-
 let activeLandmarkName = "";
 let currentLocation = null;
 let currentWeather = null;
@@ -77,27 +42,33 @@ let activePhotoRequest = 0;
 let toastTimer = 0;
 let photoTransitionTimer = 0;
 
-const sceneState = {
-  scene: null,
-  camera: null,
-  renderer: null,
-  clock: null,
-  skyline: null,
-  weatherGroup: null,
-  rain: null,
-  snow: null,
+// Lightweight 2D canvas engine that composites animated weather (rain, snow,
+// drifting clouds, fog, sun/stars, lightning) on top of the landmark photo.
+const fx = {
+  canvas: null,
+  ctx: null,
+  raf: 0,
+  lastTime: 0,
+  width: 0,
+  height: 0,
+  dpr: 1,
+  type: "",
+  isDay: true,
+  drops: [],
+  flakes: [],
   clouds: [],
-  sun: null,
-  lightning: null,
-  lightningCooldown: 0,
-  pointerX: 0,
-  pointerY: 0,
+  mist: [],
+  stars: [],
+  motes: [],
+  flash: 0,
+  flashCooldown: 4,
   reducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches
 };
 
 init();
 
 function init() {
+  setupWeatherCanvas();
   renderLandmarkChips();
   bindEvents();
   refreshIcons();
@@ -134,8 +105,6 @@ function bindEvents() {
   window.addEventListener("pointermove", (event) => {
     const x = event.clientX / Math.max(1, window.innerWidth) - 0.5;
     const y = event.clientY / Math.max(1, window.innerHeight) - 0.5;
-    sceneState.pointerX = x;
-    sceneState.pointerY = y;
     document.documentElement.style.setProperty("--photo-x", `${(-x * 16).toFixed(2)}px`);
     document.documentElement.style.setProperty("--photo-y", `${(-y * 12).toFixed(2)}px`);
   });
@@ -273,7 +242,8 @@ async function loadWeatherLocation(location, options = {}) {
     const weather = await fetchWeather(location.lat, location.lon);
     currentWeather = weather;
     updateWeatherPanel(location.label, weather);
-    await applyWeatherPhoto(weather, photoRequestId);
+    setWeatherEffect(getWeatherVisualType(weather), weather);
+    await applyPhotoForLocation(location, options, photoRequestId);
     showStatus(`${weather.condition.label} in ${location.label}`, 2600);
   } catch (error) {
     showStatus(error.message || "Weather load failed.");
@@ -388,21 +358,6 @@ function getWeatherVisualType(weather) {
   if (!severeCondition && weather.wind >= 20) return "wind";
   if (!weather.isDay && weather.condition.type === "clear") return "night";
   return weather.condition.type;
-}
-
-async function applyWeatherPhoto(weather, requestId) {
-  const type = getWeatherVisualType(weather);
-  const selected = weatherPhotos[type] || weatherPhotos.cloud;
-  const sourceUrl = `https://unsplash.com/photos/${selected.id}`;
-  const imageUrl = `https://images.unsplash.com/photo-${selected.id}?auto=format&fit=crop&w=2200&q=88`;
-
-  await applyPhoto({
-    title: selected.label,
-    url: imageUrl,
-    sourceUrl,
-    artist: "Unsplash",
-    license: "Unsplash License"
-  }, requestId);
 }
 
 function conditionFromCode(code, isDay) {
@@ -644,315 +599,365 @@ function setLoading(isLoading) {
   els.searchInput.disabled = isLoading;
 }
 
-function initScene() {
-  const canvas = els.canvas;
-  const scene = new THREE.Scene();
-  scene.fog = new THREE.FogExp2(0x0b1118, 0.018);
 
-  const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 120);
-  camera.position.set(0, 3.2, 18);
-  camera.lookAt(0, 0, 0);
+/* --------------------------------------------------------------------------
+ * Weather effects engine
+ * A lightweight 2D canvas that layers animated weather (rain, snow, drifting
+ * clouds, fog, sun/stars, lightning) over the landmark photo so the scene and
+ * the weather read as one composited image.
+ * ----------------------------------------------------------------------- */
 
-  const renderer = new THREE.WebGLRenderer({
-    canvas,
-    alpha: true,
-    antialias: true,
-    preserveDrawingBuffer: true,
-    powerPreference: "high-performance"
-  });
-  renderer.setClearColor(0x000000, 0);
-  const pixelRatioLimit = window.matchMedia("(max-width: 760px)").matches ? 1.5 : 2;
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, pixelRatioLimit));
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.outputColorSpace = THREE.SRGBColorSpace;
-
-  const ambient = new THREE.AmbientLight(0xbcd7ff, 1.2);
-  const key = new THREE.DirectionalLight(0xffd99a, 2.2);
-  key.position.set(6, 10, 8);
-  const back = new THREE.DirectionalLight(0x72e0c6, 1.0);
-  back.position.set(-8, 4, -5);
-  scene.add(ambient, key, back);
-
-  const weatherGroup = new THREE.Group();
-  scene.add(weatherGroup);
-
-  const skyline = createSkyline();
-  scene.add(skyline);
-
-  sceneState.scene = scene;
-  sceneState.camera = camera;
-  sceneState.renderer = renderer;
-  sceneState.skyline = skyline;
-  sceneState.weatherGroup = weatherGroup;
-  sceneState.lights = { ambient, key, back };
-
-  window.addEventListener("resize", resizeScene);
-  updateSceneWeather("cloud", { isDay: true, cloudCover: 60 });
-  renderer.setAnimationLoop(animateScene);
+function setupWeatherCanvas() {
+  const canvas = document.querySelector("#weatherCanvas");
+  if (!canvas) return;
+  fx.canvas = canvas;
+  fx.ctx = canvas.getContext("2d");
+  resizeWeatherCanvas();
+  window.addEventListener("resize", resizeWeatherCanvas);
+  fx.lastTime = performance.now();
+  fx.raf = requestAnimationFrame(stepWeather);
 }
 
-function createSkyline() {
-  return new THREE.Group();
+function resizeWeatherCanvas() {
+  if (!fx.canvas) return;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  fx.dpr = dpr;
+  fx.width = window.innerWidth;
+  fx.height = window.innerHeight;
+  fx.canvas.width = Math.round(fx.width * dpr);
+  fx.canvas.height = Math.round(fx.height * dpr);
+  fx.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  if (fx.type) seedWeather(fx.type);
 }
 
-function updateSceneWeather(type, weather = {}) {
-  clearWeatherObjects();
-  const { ambient, key, back } = sceneState.lights;
-  const isNight = weather.isDay === false;
-  sceneState.scene.fog = new THREE.FogExp2(isNight ? 0x050711 : 0x0b1118, 0.014);
-  ambient.intensity = isNight ? 0.58 : 1.18;
-  key.intensity = isNight ? 0.75 : 2.2;
-  back.intensity = isNight ? 0.55 : 1.0;
+function setWeatherEffect(type, weather = {}) {
+  fx.type = type;
+  fx.isDay = weather.isDay !== false;
+  seedWeather(type);
+}
 
-  if (type === "clear") {
-    return;
-  } else if (type === "cloud") {
-    createClouds(7, 0.42);
-  } else if (type === "rain") {
-    createClouds(8, 0.52);
-    createRain(window.innerWidth <= 760 ? 620 : 940);
-    sceneState.scene.fog.density = 0.026;
-  } else if (type === "snow") {
-    createClouds(6, 0.46);
-    createSnow(window.innerWidth <= 760 ? 500 : 760);
-    sceneState.scene.fog.density = 0.024;
-  } else if (type === "fog") {
-    createClouds(9, 0.68);
-    createMistBands();
-    sceneState.scene.fog.density = 0.052;
-  } else if (type === "storm") {
-    createClouds(10, 0.64);
-    createRain(window.innerWidth <= 760 ? 780 : 1250);
-    createLightning();
-    sceneState.scene.fog.density = 0.034;
-    ambient.intensity = 0.46;
-    key.intensity = 0.9;
+function seedWeather(type) {
+  const w = fx.width;
+  const h = fx.height;
+  const mobile = w <= 760;
+  fx.drops = [];
+  fx.flakes = [];
+  fx.clouds = [];
+  fx.mist = [];
+  fx.stars = [];
+  fx.motes = [];
+
+  if (type === "rain" || type === "storm") {
+    const heavy = type === "storm";
+    const count = Math.min(1400, Math.round(w * (mobile ? 0.6 : 0.85) * (heavy ? 1.25 : 1)));
+    for (let i = 0; i < count; i += 1) fx.drops.push(makeDrop(w, h, heavy));
+  }
+
+  if (type === "snow") {
+    const count = Math.min(700, Math.round(w * (mobile ? 0.25 : 0.4)));
+    for (let i = 0; i < count; i += 1) fx.flakes.push(makeFlake(w, h));
+  }
+
+  if (type === "wind") {
+    const count = mobile ? 38 : 64;
+    for (let i = 0; i < count; i += 1) fx.drops.push(makeStreak(w, h));
+  }
+
+  if (type === "cloud" || type === "rain" || type === "storm") {
+    const count = mobile ? 4 : 7;
+    for (let i = 0; i < count; i += 1) fx.clouds.push(makeCloud(w, h, i, count));
+  }
+
+  if (type === "fog") {
+    const bands = mobile ? 5 : 8;
+    for (let i = 0; i < bands; i += 1) fx.mist.push(makeMist(w, h, i, bands));
+  }
+
+  if (!fx.isDay && (type === "clear" || type === "night" || type === "cloud")) {
+    const count = Math.round(w * (mobile ? 0.12 : 0.18));
+    for (let i = 0; i < count; i += 1) fx.stars.push(makeStar(w, h));
+  }
+
+  if (fx.isDay && type === "clear") {
+    const count = mobile ? 16 : 28;
+    for (let i = 0; i < count; i += 1) fx.motes.push(makeMote(w, h));
+  }
+
+  if (type === "storm") {
+    fx.flash = 0;
+    fx.flashCooldown = randomRange(1.2, 3.4);
   }
 }
 
-function clearWeatherObjects() {
-  if (!sceneState.weatherGroup) return;
-  for (const child of [...sceneState.weatherGroup.children]) {
-    sceneState.weatherGroup.remove(child);
-    disposeObject(child);
-  }
-  sceneState.rain = null;
-  sceneState.snow = null;
-  sceneState.clouds = [];
-  sceneState.sun = null;
-  sceneState.lightning = null;
+function makeDrop(w, h, heavy) {
+  return {
+    x: Math.random() * (w + 200) - 100,
+    y: Math.random() * h - h,
+    len: randomRange(heavy ? 16 : 10, heavy ? 30 : 20),
+    speed: randomRange(heavy ? 900 : 640, heavy ? 1500 : 1040),
+    slant: heavy ? 2.4 : 1.5,
+    alpha: randomRange(0.22, 0.55)
+  };
 }
 
-function disposeObject(object) {
-  object.traverse((child) => {
-    if (child.geometry) child.geometry.dispose();
-    if (child.material) {
-      if (Array.isArray(child.material)) child.material.forEach((mat) => mat.dispose());
-      else child.material.dispose();
+function makeStreak(w, h) {
+  return {
+    x: Math.random() * w,
+    y: Math.random() * h,
+    len: randomRange(40, 130),
+    speed: randomRange(300, 640),
+    alpha: randomRange(0.04, 0.14)
+  };
+}
+
+function makeFlake(w, h) {
+  return {
+    x: Math.random() * w,
+    y: Math.random() * h - h,
+    r: randomRange(1.2, 3.6),
+    speed: randomRange(38, 92),
+    drift: randomRange(0.5, 1.7),
+    phase: Math.random() * Math.PI * 2,
+    alpha: randomRange(0.5, 0.95)
+  };
+}
+
+function makeCloud(w, h, i, count) {
+  return {
+    x: (i / count) * (w + 420) - 210 + randomRange(-60, 60),
+    y: randomRange(h * 0.02, h * 0.3),
+    scale: randomRange(0.7, 1.5),
+    speed: randomRange(6, 16),
+    alpha: randomRange(0.12, 0.3)
+  };
+}
+
+function makeMist(w, h, i, bands) {
+  return {
+    x: randomRange(-w * 0.4, 0),
+    y: (i / bands) * h * 0.92 + h * 0.04,
+    band: randomRange(h * 0.08, h * 0.2),
+    speed: randomRange(8, 24),
+    alpha: randomRange(0.06, 0.16)
+  };
+}
+
+function makeStar(w, h) {
+  return {
+    x: Math.random() * w,
+    y: Math.random() * h * 0.6,
+    r: randomRange(0.4, 1.5),
+    base: randomRange(0.2, 0.7),
+    twinkle: randomRange(0.5, 2.2),
+    phase: Math.random() * Math.PI * 2
+  };
+}
+
+function makeMote(w, h) {
+  return {
+    x: Math.random() * w,
+    y: Math.random() * h,
+    r: randomRange(0.6, 2),
+    speed: randomRange(6, 18),
+    drift: randomRange(-6, 6),
+    phase: Math.random() * Math.PI * 2,
+    alpha: randomRange(0.05, 0.2)
+  };
+}
+
+function stepWeather(now) {
+  fx.raf = requestAnimationFrame(stepWeather);
+  let dt = (now - fx.lastTime) / 1000;
+  fx.lastTime = now;
+  if (!Number.isFinite(dt) || dt <= 0) dt = 0.016;
+  if (dt > 0.05) dt = 0.05; // clamp tab-switch gaps
+  if (fx.reducedMotion) dt *= 0.25;
+  updateWeather(dt, now / 1000);
+  drawWeather(now / 1000);
+}
+
+function updateWeather(dt, t) {
+  const w = fx.width;
+  const h = fx.height;
+
+  if (fx.type === "rain" || fx.type === "storm") {
+    for (const d of fx.drops) {
+      d.y += d.speed * dt;
+      d.x += d.slant * d.speed * dt * 0.12;
+      if (d.y > h + 20) {
+        d.y = -20;
+        d.x = Math.random() * (w + 200) - 100;
+      }
     }
-  });
-}
-
-function createSun(isNight) {
-  const material = new THREE.MeshBasicMaterial({
-    color: isNight ? 0xd7e3ff : 0xffd86f,
-    transparent: true,
-    opacity: isNight ? 0.52 : 0.78
-  });
-  const sun = new THREE.Mesh(new THREE.SphereGeometry(isNight ? 0.44 : 0.68, 32, 32), material);
-  sun.position.set(8.6, 6.2, -9);
-  sceneState.weatherGroup.add(sun);
-  sceneState.sun = sun;
-}
-
-function createClouds(count, opacity) {
-  const material = new THREE.MeshBasicMaterial({
-    color: 0xe4edf3,
-    transparent: true,
-    opacity,
-    depthWrite: false
-  });
-
-  for (let i = 0; i < count; i += 1) {
-    const cloud = new THREE.Group();
-    const puffs = 4 + (i % 3);
-    for (let p = 0; p < puffs; p += 1) {
-      const sphere = new THREE.Mesh(new THREE.SphereGeometry(0.72 + p * 0.08, 16, 12), material);
-      sphere.scale.set(1.5 + p * 0.15, 0.55 + (p % 2) * 0.2, 0.6);
-      sphere.position.set(p * 0.74, Math.sin(p) * 0.16, 0);
-      cloud.add(sphere);
-    }
-    cloud.position.set(-16 + i * 4.8, 3.8 + (i % 3) * 0.72, -7 - (i % 4));
-    cloud.userData.speed = 0.16 + (i % 4) * 0.035;
-    sceneState.weatherGroup.add(cloud);
-    sceneState.clouds.push(cloud);
-  }
-}
-
-function createRain(count) {
-  const positions = new Float32Array(count * 6);
-  for (let i = 0; i < count; i += 1) {
-    const idx = i * 6;
-    const x = randomRange(-18, 18);
-    const y = randomRange(-4.2, 9.5);
-    const z = randomRange(-10, 8);
-    positions[idx] = x;
-    positions[idx + 1] = y;
-    positions[idx + 2] = z;
-    positions[idx + 3] = x + 0.16;
-    positions[idx + 4] = y - 0.85;
-    positions[idx + 5] = z;
-  }
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-  const material = new THREE.LineBasicMaterial({
-    color: 0xbceeff,
-    transparent: true,
-    opacity: 0.52
-  });
-  const rain = new THREE.LineSegments(geometry, material);
-  rain.userData.speed = 9.5;
-  sceneState.weatherGroup.add(rain);
-  sceneState.rain = rain;
-}
-
-function createSnow(count) {
-  const positions = new Float32Array(count * 3);
-  const drift = new Float32Array(count);
-  for (let i = 0; i < count; i += 1) {
-    const idx = i * 3;
-    positions[idx] = randomRange(-18, 18);
-    positions[idx + 1] = randomRange(-4.4, 9.5);
-    positions[idx + 2] = randomRange(-10, 8);
-    drift[i] = randomRange(0.4, 1.8);
-  }
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-  const material = new THREE.PointsMaterial({
-    color: 0xffffff,
-    size: 0.055,
-    transparent: true,
-    opacity: 0.86,
-    depthWrite: false
-  });
-  const snow = new THREE.Points(geometry, material);
-  snow.userData.drift = drift;
-  sceneState.weatherGroup.add(snow);
-  sceneState.snow = snow;
-}
-
-function createMistBands() {
-  const material = new THREE.MeshBasicMaterial({
-    color: 0xdfe7e2,
-    transparent: true,
-    opacity: 0.16,
-    depthWrite: false
-  });
-  for (let i = 0; i < 8; i += 1) {
-    const band = new THREE.Mesh(new THREE.PlaneGeometry(24, 1.8), material);
-    band.position.set(randomRange(-4, 4), -0.3 + i * 0.55, -4.5 - i * 0.8);
-    band.rotation.y = randomRange(-0.12, 0.12);
-    band.userData.speed = randomRange(0.08, 0.18);
-    sceneState.weatherGroup.add(band);
-    sceneState.clouds.push(band);
-  }
-}
-
-function createLightning() {
-  const light = new THREE.PointLight(0xeef6ff, 0, 80);
-  light.position.set(0, 8, -6);
-  sceneState.weatherGroup.add(light);
-  sceneState.lightning = light;
-  sceneState.lightningCooldown = 1.4;
-}
-
-function resizeScene() {
-  const width = window.innerWidth;
-  const height = window.innerHeight;
-  sceneState.camera.aspect = width / Math.max(1, height);
-  sceneState.camera.updateProjectionMatrix();
-  sceneState.renderer.setSize(width, height);
-}
-
-function animateScene() {
-  const delta = Math.min(sceneState.clock.getDelta(), 1 / 30);
-  const elapsed = sceneState.clock.elapsedTime;
-  const motionDelta = sceneState.reducedMotion ? delta * 0.25 : delta;
-
-  if (sceneState.skyline) {
-    sceneState.skyline.rotation.y += ((sceneState.pointerX * 0.055) - sceneState.skyline.rotation.y) * 0.06;
-    sceneState.skyline.rotation.x += ((-sceneState.pointerY * 0.025) - sceneState.skyline.rotation.x) * 0.06;
-  }
-
-  if (sceneState.sun) {
-    sceneState.sun.scale.setScalar(1 + Math.sin(elapsed * 1.4) * 0.04);
-  }
-
-  animateClouds(motionDelta);
-  animateRain(motionDelta);
-  animateSnow(motionDelta, elapsed);
-  animateLightning(motionDelta);
-
-  sceneState.renderer.render(sceneState.scene, sceneState.camera);
-}
-
-function animateClouds(delta) {
-  for (const cloud of sceneState.clouds) {
-    cloud.position.x += cloud.userData.speed * delta;
-    if (cloud.position.x > 18) cloud.position.x = -18;
-  }
-}
-
-function animateRain(delta) {
-  if (!sceneState.rain) return;
-  const attr = sceneState.rain.geometry.attributes.position;
-  const positions = attr.array;
-  const speed = sceneState.rain.userData.speed * delta;
-  for (let i = 0; i < positions.length; i += 6) {
-    positions[i + 1] -= speed;
-    positions[i + 4] -= speed;
-    if (positions[i + 1] < -5.6) {
-      const y = randomRange(6.5, 9.5);
-      const x = randomRange(-18, 18);
-      const z = randomRange(-10, 8);
-      positions[i] = x;
-      positions[i + 1] = y;
-      positions[i + 2] = z;
-      positions[i + 3] = x + 0.16;
-      positions[i + 4] = y - 0.85;
-      positions[i + 5] = z;
+  } else if (fx.type === "wind") {
+    for (const s of fx.drops) {
+      s.x += s.speed * dt;
+      if (s.x - s.len > w) {
+        s.x = -s.len;
+        s.y = Math.random() * h;
+      }
     }
   }
-  attr.needsUpdate = true;
-}
 
-function animateSnow(delta, elapsed) {
-  if (!sceneState.snow) return;
-  const attr = sceneState.snow.geometry.attributes.position;
-  const positions = attr.array;
-  const drift = sceneState.snow.userData.drift;
-  for (let i = 0; i < positions.length; i += 3) {
-    const particle = i / 3;
-    positions[i + 1] -= delta * (0.55 + drift[particle] * 0.28);
-    positions[i] += Math.sin(elapsed * drift[particle] + particle) * delta * 0.18;
-    if (positions[i + 1] < -4.9) {
-      positions[i] = randomRange(-18, 18);
-      positions[i + 1] = randomRange(6.5, 9.8);
-      positions[i + 2] = randomRange(-10, 8);
+  if (fx.type === "snow") {
+    for (const f of fx.flakes) {
+      f.y += f.speed * dt;
+      f.x += Math.sin(t * f.drift + f.phase) * 16 * dt + f.drift * 5 * dt;
+      if (f.y > h + 8) {
+        f.y = -8;
+        f.x = Math.random() * w;
+      }
     }
   }
-  attr.needsUpdate = true;
+
+  for (const c of fx.clouds) {
+    c.x += c.speed * dt;
+    if (c.x - 280 * c.scale > w) c.x = -280 * c.scale;
+  }
+
+  for (const m of fx.mist) {
+    m.x += m.speed * dt;
+    if (m.x > w) m.x = -w * 0.4;
+  }
+
+  for (const p of fx.motes) {
+    p.y -= p.speed * dt;
+    p.x += Math.sin(t + p.phase) * p.drift * dt;
+    if (p.y < -4) {
+      p.y = h + 4;
+      p.x = Math.random() * w;
+    }
+  }
+
+  if (fx.type === "storm") {
+    fx.flashCooldown -= dt;
+    if (fx.flashCooldown <= 0) {
+      fx.flash = 1;
+      fx.flashCooldown = randomRange(2.4, 6.4);
+    } else {
+      fx.flash *= Math.pow(0.018, dt);
+      if (fx.flash < 0.01) fx.flash = 0;
+    }
+  }
 }
 
-function animateLightning(delta) {
-  if (!sceneState.lightning) return;
-  sceneState.lightningCooldown -= delta;
-  if (sceneState.lightningCooldown <= 0) {
-    sceneState.lightning.intensity = 7.5;
-    sceneState.lightningCooldown = randomRange(3.2, 7.5);
-  } else {
-    sceneState.lightning.intensity *= 0.82;
+function drawWeather(t) {
+  const ctx = fx.ctx;
+  if (!ctx) return;
+  const w = fx.width;
+  const h = fx.height;
+  ctx.clearRect(0, 0, w, h);
+
+  if (fx.isDay && fx.type === "clear") {
+    drawGlow(ctx, w * 0.74, h * 0.22, Math.max(w, h) * 0.4, "rgba(255,221,140,0.42)");
+  } else if (!fx.isDay && (fx.type === "clear" || fx.type === "night")) {
+    drawGlow(ctx, w * 0.78, h * 0.18, Math.max(w, h) * 0.22, "rgba(214,226,255,0.32)");
   }
+
+  for (const s of fx.stars) {
+    const a = s.base + Math.sin(t * s.twinkle + s.phase) * 0.3;
+    ctx.globalAlpha = Math.max(0, Math.min(1, a));
+    ctx.fillStyle = "#eaf2ff";
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  const cloudTint = fx.isDay ? "236,242,248" : "150,165,195";
+  for (const c of fx.clouds) drawCloud(ctx, c, cloudTint);
+
+  for (const m of fx.mist) {
+    const grad = ctx.createLinearGradient(m.x, 0, m.x + w, 0);
+    grad.addColorStop(0, "rgba(222,228,224,0)");
+    grad.addColorStop(0.5, `rgba(222,228,224,${m.alpha})`);
+    grad.addColorStop(1, "rgba(222,228,224,0)");
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, m.y - m.band / 2, w, m.band);
+  }
+
+  if (fx.type === "rain" || fx.type === "storm") {
+    ctx.lineCap = "round";
+    ctx.lineWidth = fx.type === "storm" ? 1.6 : 1.1;
+    ctx.strokeStyle = "rgba(196,238,255,1)";
+    for (const d of fx.drops) {
+      ctx.globalAlpha = d.alpha;
+      ctx.beginPath();
+      ctx.moveTo(d.x, d.y);
+      ctx.lineTo(d.x - d.slant * 4, d.y - d.len);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  } else if (fx.type === "wind") {
+    ctx.lineCap = "round";
+    ctx.lineWidth = 1.4;
+    ctx.strokeStyle = "rgba(226,242,245,1)";
+    for (const s of fx.drops) {
+      ctx.globalAlpha = s.alpha;
+      ctx.beginPath();
+      ctx.moveTo(s.x, s.y);
+      ctx.lineTo(s.x + s.len, s.y - s.len * 0.12);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  if (fx.type === "snow") {
+    ctx.fillStyle = "#ffffff";
+    for (const f of fx.flakes) {
+      ctx.globalAlpha = f.alpha;
+      ctx.beginPath();
+      ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  if (fx.motes.length) {
+    ctx.fillStyle = "#fff2cf";
+    for (const p of fx.motes) {
+      ctx.globalAlpha = p.alpha;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  if (fx.flash > 0) {
+    ctx.globalAlpha = Math.min(0.5, fx.flash * 0.5);
+    ctx.fillStyle = "#e9f1ff";
+    ctx.fillRect(0, 0, w, h);
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawCloud(ctx, c, tint) {
+  const baseR = 120 * c.scale;
+  const puffs = [
+    [0, 0, baseR],
+    [baseR * 0.8, baseR * 0.1, baseR * 0.8],
+    [-baseR * 0.8, baseR * 0.12, baseR * 0.75],
+    [baseR * 0.35, -baseR * 0.32, baseR * 0.7],
+    [-baseR * 0.42, -baseR * 0.2, baseR * 0.62]
+  ];
+  for (const [dx, dy, r] of puffs) {
+    const cx = c.x + dx;
+    const cy = c.y + dy;
+    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+    g.addColorStop(0, `rgba(${tint},${c.alpha})`);
+    g.addColorStop(1, `rgba(${tint},0)`);
+    ctx.fillStyle = g;
+    ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+  }
+}
+
+function drawGlow(ctx, x, y, r, color) {
+  const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+  g.addColorStop(0, color);
+  g.addColorStop(1, color.replace(/[\d.]+\)$/, "0)"));
+  ctx.fillStyle = g;
+  ctx.fillRect(x - r, y - r, r * 2, r * 2);
 }
 
 function randomRange(min, max) {
